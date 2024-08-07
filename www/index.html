@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chatroom</title>
+
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vue@2/dist/vue.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vue-router@3.5.3/dist/vue-router.js"></script>
+
+    <script src="/static/signalwire.js"></script>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+      }
+      .container {
+        max-width: 500px;
+        margin: 0 auto;
+        padding: 20px;
+        text-align: center;
+      }
+      .chatroom {
+        text-align: left;
+      }
+      .messages {
+        border: 1px solid #ccc;
+        padding: 10px;
+        height: 300px;
+        overflow-y: scroll;
+      }
+      .message-input {
+        margin-top: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <router-view></router-view>
+    </div>
+
+    <script>
+      // Components
+      const Login = {
+        template: `
+                <div class="container">
+                    <h2>Join Chatroom</h2>
+                    <form @submit.prevent="joinChatroom">
+                        <div>
+                            <input v-model="username" type="text" placeholder="Username" required>
+                        </div>
+                        <div>
+                            <input v-model="channel" type="text" placeholder="Channel" required>
+                        </div>
+                        <div>
+                            <button type="submit">Join</button>
+                        </div>
+                    </form>
+                </div>
+            `,
+        data() {
+          return {
+            username: "",
+            channel: "",
+          };
+        },
+        methods: {
+          async joinChatroom() {
+            if (this.username && this.channel) {
+              let postData = {
+                ttl: 15,
+                channels: this.channel,
+                member_id: this.username,
+              };
+
+              let request = await axios.post("/api/token", postData);
+              window.localStorage.setItem("token", request.data.token);
+              window.localStorage.setItem("channel", this.channel);
+              window.localStorage.setItem("username", this.username);
+
+              if (request) {
+                this.$router.push({
+                  name: "Chatroom",
+                  params: {
+                    username: this.username,
+                    channel: this.channel,
+                    token: request.data.token,
+                  },
+                });
+              }
+            }
+          },
+        },
+      };
+
+      const Chatroom = {
+        template: `
+                <div class="container chatroom">
+                    <h2>Chatroom: {{ channel }}</h2>
+                    <button @click="logout">Logout</button>
+                    <div class="messages">
+                        <div v-for="message in messages">
+                            <strong>{{ message?.member.id }}:</strong> {{ message?.content }}
+                        </div>
+                    </div>
+                    <div class="message-input">
+                        <input v-model="newMessage" type="text" placeholder="Type a message">
+                        <button @click="sendMessage">Send</button>
+                    </div>
+                </div>
+            `,
+        mounted() {
+          this.initializeChat();
+        },
+        data() {
+          return {
+            username:
+              this.$route.params.username ||
+              window.localStorage.getItem("username"),
+            channel:
+              this.$route.params.channel ||
+              window.localStorage.getItem("channel"),
+            messages: [],
+            newMessage: "",
+            chatClient: null,
+          };
+        },
+        methods: {
+          async sendMessage() {
+            if (this.newMessage.trim()) {
+              await this.chatClient.publish({
+                channel: this.channel,
+                content: this.newMessage,
+              });
+              this.newMessage = "";
+            }
+          },
+
+          async initializeChat() {
+            this.chatClient = new SignalWire.Chat.Client({
+              token: window.localStorage.getItem("token"),
+            });
+
+            this.chatClient.subscribe(this.channel);
+            await this.getMessages();
+
+            await this.chatClient.on("message", (message) => {
+              this.appendMessage(message);
+            });
+
+            this.chatClient.on("session.expiring", async () => {
+                console.log("Session is expiring....")
+              const newToken = await axios.post("/api/token", {
+                channels: this.channel,
+                ttl: 15, 
+                member_id: this.username
+              })
+
+              window.localStorage.setItem("token", request.data.token)
+              this.channel = request.data.token
+
+              await this.chatClient.updateToken(newToken.data.token);
+            });
+          },
+
+          async getMessages() {
+            const response = await this.chatClient.getMessages({
+              channel: this.channel,
+            });
+            this.messages = response.messages.reverse();
+            console.log(this.messages);
+          },
+
+          appendMessage(message) {
+            this.messages.push(message);
+          },
+
+          async logout() {
+            await this.chatClient.unsubscribe(this.channel);
+
+            window.localStorage.removeItem("username");
+            window.localStorage.removeItem("channel");
+            window.localStorage.removeItem("token");
+
+            this.$router.push({ name: "Login" });
+          },
+        },
+      };
+
+      // Router
+      const router = new VueRouter({
+        routes: [
+          { path: "/", name: "Login", component: Login },
+          { path: "/chatroom", name: "Chatroom", component: Chatroom },
+        ],
+      });
+
+      // App
+      new Vue({
+        el: "#app",
+        router,
+      });
+    </script>
+  </body>
+</html>
